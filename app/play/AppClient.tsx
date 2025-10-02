@@ -153,3 +153,7 @@ async function createLeague() {
     alert(`Create league failed: ${e.message}`);
   }
 }
+
+export default function AppClient() {
+  return <App />;
+}
