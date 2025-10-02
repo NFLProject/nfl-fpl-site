@@ -154,6 +154,7 @@ async function createLeague() {
   }
 }
 
+
 export default function AppClient() {
   return <App />;
 }
