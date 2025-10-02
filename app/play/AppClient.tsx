@@ -139,9 +139,17 @@ function App() {
     setPlayers(res);
   }
 
-  async function createLeague() {
-    try {
-      const res = await api("/league/create", {
-        method: "POST",
-        userId,
-        body: { name: "UK NFL FPL League", tea
+async function createLeague() {
+  try {
+    const res = await api("/league/create", {
+      method: "POST",
+      userId,
+      body: { name: "UK NFL FPL League", team_name: teamName },
+    });
+    setLeagueId(String(res.league_id));
+    setEntryId(res.entry_id);
+    alert(`League created! ID: ${res.league_id}`);
+  } catch (e: any) {
+    alert(`Create league failed: ${e.message}`);
+  }
+}
