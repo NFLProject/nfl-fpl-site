@@ -1,5 +1,8 @@
 "use client";
 
+const count = await getSquadCount(userId, leagueId, gw);
+if (count < 15) router.replace(`/market?gw=${gw}`);
+
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "../_lib/api";
