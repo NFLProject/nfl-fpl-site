@@ -1,85 +1,200 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "../_lib/api";
-import { useUser } from "../_lib/useUser";
+
+// If you already have an API helper, you can delete this line and import from there.
+const API = process.env.NEXT_PUBLIC_API_URL as string;
+
+// Small helpers so this file is self-contained
+function getUserId(): number | null {
+  if (typeof window === "undefined") return null;
+  const v = localStorage.getItem("userId");
+  return v ? Number(v) : null;
+}
+function getCurrentGW(): number {
+  if (typeof window === "undefined") return 1;
+  const v = localStorage.getItem("gw");
+  return v ? Number(v) : 1;
+}
 
 export default function LeaguePage() {
   const router = useRouter();
-  const { userId, me } = useUser();
-  const [teamName, setTeamName] = useState("Marc's Marauders");
-  const [leagueId, setLeagueId] = useState("");
 
+  // Gate: if no userId, send to home
+  const [userId, setUserId] = useState<number | null>(null);
   useEffect(() => {
-    if (!userId) router.push("/"); // must be logged in
-    const saved = (typeof window !== "undefined" && localStorage.getItem("leagueId")) || "";
-    if (saved) setLeagueId(saved);
-  }, [userId, router]);
+    const id = getUserId();
+    if (!id) {
+      router.replace("/?next=/league");
+    } else {
+      setUserId(id);
+    }
+  }, [router]);
 
-  async function createLeague() {
+  const [teamName, setTeamName] = useState("");
+  const [joinLeagueId, setJoinLeagueId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const gw = getCurrentGW();
+
+  // --- CREATE LEAGUE ---
+  async function onCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!userId) return;
+    setErr(null);
+    setLoading(true);
     try {
-      const res = await api("/league/create", {
+      const res = await fetch(`${API}/league/create`, {
         method: "POST",
-        userId,
-        body: { name: "UK NFL FPL League", team_name: teamName },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, teamName }),
       });
-      localStorage.setItem("leagueId", String(res.league_id));
-      localStorage.setItem("entryId", String(res.entry_id));
-      alert(`League created (ID ${res.league_id}). Next: pick your squad.`);
-      router.push("/pick");
+      if (!res.ok) throw new Error(await res.text().catch(() => "Create failed"));
+
+      const data = await res.json();
+      // handle different key styles defensively
+      const leagueId =
+        data.leagueId ?? data.league_id ?? data.id ?? data.league?.id;
+      const entryId =
+        data.entryId ?? data.entry_id ?? data.entry?.id;
+
+      if (!leagueId || !entryId)
+        throw new Error("Missing league/entry id in response");
+
+      localStorage.setItem("leagueId", String(leagueId));
+      localStorage.setItem("entryId", String(entryId));
+
+      // 👉 STEP 6: redirect to the Player Market once league is ready
+      router.replace(`/market?gw=${gw}`);
     } catch (e: any) {
-      alert(`Create league failed: ${e.message}`);
+      setErr(e?.message || "Could not create league");
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function joinLeague() {
+  // --- JOIN LEAGUE ---
+  async function onJoin(e: React.FormEvent) {
+    e.preventDefault();
+    if (!userId) return;
+    setErr(null);
+    setLoading(true);
     try {
-      const res = await api("/league/join", {
+      const numericLeagueId = Number(joinLeagueId);
+      if (!numericLeagueId) throw new Error("Enter a valid League ID");
+
+      const res = await fetch(`${API}/league/join`, {
         method: "POST",
-        userId,
-        body: { league_id: Number(leagueId), team_name: teamName },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, leagueId: numericLeagueId, teamName }),
       });
+      if (!res.ok) throw new Error(await res.text().catch(() => "Join failed"));
+
+      const data = await res.json();
+      const leagueId =
+        data.leagueId ?? data.league_id ?? numericLeagueId;
+      const entryId =
+        data.entryId ?? data.entry_id ?? data.entry?.id;
+
+      if (!leagueId || !entryId)
+        throw new Error("Missing league/entry id in response");
+
       localStorage.setItem("leagueId", String(leagueId));
-      localStorage.setItem("entryId", String(res.entry_id));
-      alert("Joined league. Next: pick your squad.");
-      router.push("/pick");
+      localStorage.setItem("entryId", String(entryId));
+
+      // 👉 STEP 6 again: once joined, go pick players
+      router.replace(`/market?gw=${gw}`);
     } catch (e: any) {
-      alert(`Join league failed: ${e.message}`);
+      setErr(e?.message || "Could not join league");
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
-    <section className="max-w-3xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold">League</h1>
-      <p className="text-sm text-slate-600">Signed in as <b>{me?.name || `User ${userId}`}</b></p>
+    <div className="max-w-3xl mx-auto px-4 py-10">
+      <h1 className="text-3xl font-extrabold tracking-tight text-ink">
+        League setup
+      </h1>
+      <p className="text-slate-600 mt-1">
+        Create a new league or join an existing one. You’ll pick players next.
+      </p>
 
-      <div className="bg-white rounded-2xl shadow p-5 space-y-4">
-        <h2 className="text-lg font-semibold">Create a new league</h2>
-        <label className="block">
-          <span className="text-sm text-slate-600">Team Name</span>
-          <input className="mt-1 w-full border rounded-xl px-3 py-2" value={teamName} onChange={(e) => setTeamName(e.target.value)} />
-        </label>
-        <button className="px-4 py-2 rounded-xl bg-black text-white" onClick={createLeague} disabled={!userId}>
-          Create League
-        </button>
+      {err && (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {err}
+        </div>
+      )}
+
+      <div className="mt-8 grid gap-6 md:grid-cols-2">
+        {/* Create league */}
+        <form
+          onSubmit={onCreate}
+          className="rounded-2xl border bg-white p-5 shadow-card"
+        >
+          <h2 className="text-lg font-semibold">Create a league</h2>
+          <p className="text-sm text-slate-600 mt-1">
+            Choose your team name. We’ll make the league and your entry.
+          </p>
+          <label className="block text-sm mt-4">
+            Team name
+            <input
+              className="mt-1 w-full rounded-xl border px-3 py-2"
+              placeholder="e.g. Marc's Marauders"
+              value={teamName}
+              onChange={(e) => setTeamName(e.target.value)}
+              required
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={loading || !teamName}
+            className="mt-4 w-full rounded-xl bg-brand px-4 py-2 font-medium text-white shadow disabled:opacity-50"
+          >
+            {loading ? "Creating…" : "Create League"}
+          </button>
+        </form>
+
+        {/* Join league */}
+        <form
+          onSubmit={onJoin}
+          className="rounded-2xl border bg-white p-5 shadow-card"
+        >
+          <h2 className="text-lg font-semibold">Join a league</h2>
+          <p className="text-sm text-slate-600 mt-1">
+            Enter the League ID and your team name.
+          </p>
+          <label className="block text-sm mt-4">
+            League ID
+            <input
+              className="mt-1 w-full rounded-xl border px-3 py-2"
+              placeholder="e.g. 12345"
+              value={joinLeagueId}
+              onChange={(e) => setJoinLeagueId(e.target.value)}
+              inputMode="numeric"
+              required
+            />
+          </label>
+          <label className="block text-sm mt-3">
+            Team name
+            <input
+              className="mt-1 w-full rounded-xl border px-3 py-2"
+              placeholder="e.g. Marc's Marauders"
+              value={teamName}
+              onChange={(e) => setTeamName(e.target.value)}
+              required
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={loading || !joinLeagueId || !teamName}
+            className="mt-4 w-full rounded-xl bg-ink px-4 py-2 font-medium text-white shadow disabled:opacity-50"
+          >
+            {loading ? "Joining…" : "Join League"}
+          </button>
+        </form>
       </div>
 
-      <div className="bg-white rounded-2xl shadow p-5 space-y-4">
-        <h2 className="text-lg font-semibold">Join an existing league</h2>
-        <label className="block">
-          <span className="text-sm text-slate-600">League ID</span>
-          <input className="mt-1 w-full border rounded-xl px-3 py-2" value={leagueId} onChange={(e) => setLeagueId(e.target.value)} />
-        </label>
-        <button className="px-4 py-2 rounded-xl bg-black text-white" onClick={joinLeague} disabled={!userId || !leagueId}>
-          Join League
-        </button>
-      </div>
-
-      <div className="flex gap-3">
-        <a href="/" className="px-3 py-1.5 rounded-lg border">← Back</a>
-        <a href="/pick" className="px-3 py-1.5 rounded-lg border">Skip to Pick</a>
-      </div>
-    </section>
-  );
-}
+      <div className="mt-6 text-sm text-slate-500">
+        Tip: After creating or joining, you’ll be tak
